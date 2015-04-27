@@ -2,6 +2,12 @@ library(igraph)
 library(ggplot2)
 library(reshape2)
 
+#prepare for parallel computation
+library(doParallel)
+library(foreach)
+cl = makeCluster(4)
+
+
 source('metrics.R')
 
 #Load Les Miserables graph
@@ -44,14 +50,14 @@ plot(miserables)
 #=======================classification=======================================
 source('classification.R')
 
-class = classify.multiple(times = 100, graph = miserables, distance = logforest_dist, alpha = 0.01)
+class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.01)
 
 #plot
 V(miserables)$color = class
 plot(miserables)
 
 #=====================modularity and error alpha-resistance==========================
-alphas <- seq(0.01, 0.91, by=0.01)
+alphas <- seq(0.01, 1.0, by=0.01)
 dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
 names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
 
@@ -60,10 +66,12 @@ acc.df = data.frame(alpha = alphas)
 
 #calculate modularity for each alpha in alphas
 for(i in 1:length(dist.vect)) {
+    cat("Classification with ", names(dist.vect)[i], "\n")
     mods = vector()
     acc = vector()
     for(a in alphas) {
-        class = classify.multiple(times = 100, graph = miserables, distance = dist.vect[[i]], alpha = a)
+        cat("with alpha = ", a, "\n")
+        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
         mods = c(mods, modularity(miserables, class))
         acc = c(acc, sum(class==miserables.clust)/length(class))
     }
@@ -73,20 +81,66 @@ for(i in 1:length(dist.vect)) {
 mods.df
 acc.df
 
+#==============print results============
+folder = as.character(Sys.Date())
+dir.create(folder, showWarnings = FALSE)
+
 #view dependency of alpha and modularity
 mods.melted.df <- melt(mods.df, id=c("alpha"))
 g.mods<-ggplot(mods.melted.df) + 
     geom_point(aes(alpha, value, colour=variable)) +
-    geom_smooth(aes(alpha, value, colour=variable)) +
+    #geom_smooth(aes(alpha, value, colour=variable)) +
     geom_line(aes(alpha, value, colour=variable))
+png(filename=file.path(folder,'miserables_mod.png'))
 plot(g.mods)
+dev.off()
 
 #view dependency of alpha and error
 acc.melted.df <- melt(acc.df, id=c("alpha"))
 g.acc<-ggplot(acc.melted.df) + 
                  geom_point(aes(alpha, value, colour=variable)) +
-                 geom_smooth(aes(alpha, value, colour=variable)) +
+                 #geom_smooth(aes(alpha, value, colour=variable)) +
                  geom_line(aes(alpha, value, colour=variable))
+png(filename=file.path(folder,'miserables_error.png'))
 plot(g.acc)
+dev.off()
 
 
+#==================Calc modularity multiple times with fixed alpha=======================
+a = 0.01
+fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
+fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
+
+strt <- Sys.time()
+for(i in 1:length(dist.vect)) {
+    cat("Classification with ", names(dist.vect)[i])
+    mods = vector()
+    acc = vector()
+    for(j in 1:100) {
+        cat("\nfor time", j, ": ")
+        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+        mods = c(mods, modularity(miserables, class))
+        acc = c(acc, sum(class==miserables.clust)/length(class))
+    }
+    fix.mods.df[names(dist.vect[i])] = mods
+    fix.acc.df[names(dist.vect[i])] = acc
+}
+print(Sys.time-strt)
+
+fix.mods.melted.df <- melt(fix.mods.df)
+g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
+                    geom_boxplot()
+png(filename=file.path(folder,'miserables_mod_fixed_alpha.png'))
+plot(g.fix.mod)
+dev.off()
+
+fix.acc.melted.df <- melt(fix.acc.df)
+g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
+    geom_boxplot()
+png(filename=file.path(folder,'miserables_acc_fixed_alpha.png'))
+plot(g.fix.mod)
+dev.off()
+
+
+# shut down parallel computation
+stopCluster(cl)

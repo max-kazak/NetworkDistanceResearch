@@ -15,6 +15,12 @@ general_dist <- function(H_0, log = F) {
     return(D)
 }
 
+addnames <- function(D, G) {
+    rownames(D) <- V(G)$name
+    colnames(D) <- V(G)$name
+    return(D)
+}
+
 walk_dist <- function(G, alpha) {
     
     A = get.adjacency(G)
@@ -25,6 +31,8 @@ walk_dist <- function(G, alpha) {
     H_0 =  solve(I - t*A)
     
     D = general_dist(H_0, log = T)
+    
+    D = addnames(D, G)
     
     return(D)
 }
@@ -41,6 +49,8 @@ logforest_dist <- function(G ,alpha) {
     
     D = general_dist(H_0, log = T)
     
+    D = addnames(D, G)
+    
     return(D)    
 }
 
@@ -55,6 +65,8 @@ plainforest_dist <- function(G, alpha) {
     
     D = general_dist(H)
     
+    D = addnames(D, G)
+    
     return(D)
 }
 
@@ -68,6 +80,8 @@ plainwalk_dist <- function(G, alpha) {
     
     D = general_dist(H)
     
+    D = addnames(D, G)
+    
     return(D)
 }
 
@@ -79,6 +93,8 @@ communicability_dist <- function(G, alpha) {
     
     D = general_dist(H)
     
+    D = addnames(D, G)
+    
     return(D)
 }
 
@@ -89,6 +105,8 @@ logcommunicability_dist <- function(G, alpha) {
     H_0 =  as.matrix(exp(t*A))
     
     D = general_dist(H_0, log=T)
+    
+    D = addnames(D, G)
     
     return(D)
 }

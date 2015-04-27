@@ -1,13 +1,12 @@
 #function that marks one random vertex in each cluster
 #and reclassifies according to distance matrix
-classify <- function(graph, distance, alpha) {
-    marked = sapply(1:max(df.clust$clust), function(i){
-        sample(df.clust[df.clust$clust==i,1], 1)
+classify <- function(D, clusters) {
+    marked = sapply(1:max(clusters$clust), function(i){
+        sample(clusters[clusters$clust==i,1], 1)
     })
     marked = levels(marked)[marked]
-    df.marked = df.clust[df.clust$V %in% marked,]
+    df.marked = clusters[clusters$V %in% marked,]
     
-    D = distance(graph, alpha)
     D.marked = D[,marked]
     
     graph.clust = sapply(rownames(D), function(v){
@@ -17,11 +16,14 @@ classify <- function(graph, distance, alpha) {
     graph.clust
 }
 
-classify.multiple <- function(times ,graph, distance, alpha) {
+classify.multiple <- function(times ,graph, clusters, distance, alpha) {
+    D = distance(graph, alpha)
+    
     #classification for numerous times
     class <- vector()
     for(i in seq(times)) {
-        class <- c(class,classify(graph, distance, alpha))
+        cat("=")
+        class <- c(class,classify(D, clusters, distance))
         dim(class) <- c(77,i)
     }
     rownames(class) <- V(graph)$name
