@@ -104,7 +104,8 @@ mods.melted.df <- melt(mods.df, id=c("alpha"))
 g.mods<-ggplot(mods.melted.df) + 
     geom_point(aes(alpha, value, colour=variable)) +
     #geom_smooth(aes(alpha, value, colour=variable)) +
-    geom_line(aes(alpha, value, colour=variable))
+    geom_line(aes(alpha, value, colour=variable)) +
+    ggtitle("Модульность")
 png(filename=file.path(folder,'miserables_mod.png'))
 plot(g.mods)
 dev.off()
@@ -151,14 +152,14 @@ for(i in 1:length(dist.vect)) {
 #plot results
 fix.mods.melted.df <- melt(fix.mods.df)
 g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
-                    geom_boxplot()
+                    geom_boxplot() + ggtitle("Модульность с a=0.01")
 png(filename=file.path(folder,'miserables_mod_fixed_alpha.png'))
 plot(g.fix.mod)
 dev.off()
 
 fix.acc.melted.df <- melt(fix.acc.df)
 g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
-    geom_boxplot()
+    geom_boxplot() + ggtitle("Проценто ошибок с a=0.01")
 png(filename=file.path(folder,'miserables_acc_fixed_alpha.png'))
 plot(g.fix.mod)
 dev.off()
