@@ -22,8 +22,8 @@ classify.multiple <- function(times ,graph, clusters, distance, alpha) {
     #classification for numerous times
     class <- vector()
     for(i in seq(times)) {
-        cat("=")
-        class <- c(class,classify(D, clusters, distance))
+        #cat("=")
+        class <- c(class,classify(D, clusters))
         dim(class) <- c(77,i)
     }
     rownames(class) <- V(graph)$name

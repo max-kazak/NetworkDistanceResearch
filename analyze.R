@@ -1,21 +1,31 @@
 library(igraph)
 library(ggplot2)
 library(reshape2)
+library(RColorBrewer)
 
 #prepare for parallel computation
 library(doParallel)
 library(foreach)
-cl = makeCluster(4)
-
+numWorkers=4
 
 source('metrics.R')
 
 #Load Les Miserables graph
 load("miserables.Rdata")
+names <- read.table("names.txt", stringsAsFactors=F)$V1
+V(miserables)$name <- names
+
+#add fixed layout
+mylayout <- layout.fruchterman.reingold(miserables)
+miserables$layout <- mylayout
+
+#choose palette
+palette(brewer.pal(7, "Dark2"))
+#display.brewer.all()
 
 #view graph
 V(miserables)
-plot(miserables)
+plot(miserables, vertex.shape="none")
 
 # let's see if we have communities here using the 
 # Grivan-Newman algorithm
@@ -42,9 +52,8 @@ df.clust = data.frame(V(miserables)$name,miserables.clust)
 colnames(df.clust) = c("V","clust")
 
 #view graph colored by cluster
-V(miserables)$color = miserables.clust
-miserables$layout <- layout.fruchterman.reingold
-plot(miserables)
+V(miserables)$label.color = miserables.clust
+plot(miserables, vertex.shape="none")
 #tkplot(miserables)
 
 #=======================classification=======================================
@@ -53,33 +62,38 @@ source('classification.R')
 class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.01)
 
 #plot
-V(miserables)$color = class
-plot(miserables)
+V(miserables)$label.color = class
+plot(miserables, vertex.shape="none")
 
 #=====================modularity and error alpha-resistance==========================
 alphas <- seq(0.01, 1.0, by=0.01)
 dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
 names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
 
+cl = makeCluster(numWorkers)
+registerDoParallel(cl)
+strt <- Sys.time()
+#calculate modularity for each alpha in alphas
+lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
+        source("metrics.R")
+        mods = vector()
+        acc = vector()
+        for(a in alphas) {
+            class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+            mods = c(mods, modularity(miserables, class))
+            acc = c(acc, sum(class==miserables.clust)/length(class))
+        }
+        data.frame(mods, acc)
+}
+print(Sys.time()-strt)
+stopCluster(cl)
+
 mods.df = data.frame(alpha = alphas)
 acc.df = data.frame(alpha = alphas)
-
-#calculate modularity for each alpha in alphas
 for(i in 1:length(dist.vect)) {
-    cat("Classification with ", names(dist.vect)[i], "\n")
-    mods = vector()
-    acc = vector()
-    for(a in alphas) {
-        cat("with alpha = ", a, "\n")
-        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
-        mods = c(mods, modularity(miserables, class))
-        acc = c(acc, sum(class==miserables.clust)/length(class))
-    }
-    mods.df[names(dist.vect[i])] = mods
-    acc.df[names(dist.vect[i])] = acc
+    mods.df[names(dist.vect[i])] = lres[[i]]$mods
+    acc.df[names(dist.vect[i])] = lres[[i]]$acc
 }
-mods.df
-acc.df
 
 #==============print results============
 folder = as.character(Sys.Date())
@@ -108,25 +122,33 @@ dev.off()
 
 #==================Calc modularity multiple times with fixed alpha=======================
 a = 0.01
-fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
-fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
 
+cl = makeCluster(numWorkers)
+registerDoParallel(cl)
 strt <- Sys.time()
-for(i in 1:length(dist.vect)) {
-    cat("Classification with ", names(dist.vect)[i])
+#calculate modularity and accuracy
+lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
+    source("metrics.R")
     mods = vector()
     acc = vector()
     for(j in 1:100) {
-        cat("\nfor time", j, ": ")
         class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
         mods = c(mods, modularity(miserables, class))
         acc = c(acc, sum(class==miserables.clust)/length(class))
     }
-    fix.mods.df[names(dist.vect[i])] = mods
-    fix.acc.df[names(dist.vect[i])] = acc
+    data.frame(mods, acc)
 }
-print(Sys.time-strt)
+print(Sys.time()-strt)
+stopCluster(cl)
 
+fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
+fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
+for(i in 1:length(dist.vect)) {
+    fix.mods.df[names(dist.vect[i])] = lres[[i]]$mods
+    fix.acc.df[names(dist.vect[i])] = lres[[i]]$acc
+}
+
+#plot results
 fix.mods.melted.df <- melt(fix.mods.df)
 g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
                     geom_boxplot()
@@ -142,5 +164,3 @@ plot(g.fix.mod)
 dev.off()
 
 
-# shut down parallel computation
-stopCluster(cl)
