@@ -1,0 +1,274 @@
+---
+title: "Отчет"
+author: "Max"
+date: "Tuesday, April 28, 2015"
+output: pdf_document
+---
+
+В этом отчете хотелось бы написать, что удалось сделать.
+
+```{r, echo=FALSE, results='hide', warning=FALSE}
+library(igraph)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+source('metrics.R')
+```
+
+Для начала переписал код, чтобы уменьшить скорость обработки и добавить параллельные вычисления
+
+```{r, results='hide', warning=FALSE}
+library(doParallel)
+library(foreach)
+numWorkers=4
+```
+
+##Загрузка и обработка данных
+
+Загрузка графа происходит с прежними данными, но теперь вручную были добавлены имена героев Отверженных. На мой взгляд так граф выглядит более понятно, и это соответсвует оригинальному исследованию.
+```{r}
+load("miserables.Rdata")
+names <- read.table("names.txt", stringsAsFactors=F)$V1
+V(miserables)$name <- names
+```
+
+Также графу был добавлен фиксированный лэйоут, что облегчает визуальное сравнение графических представлений графа. Расположение  вершин расчитвыется по алгоритму Фрухтермана-Рейнгольда.
+```{r}
+mylayout <- layout.fruchterman.reingold(miserables)
+miserables$layout <- mylayout
+```
+
+Ну и по множественным рекомендациям в прошлую нашу встречу поменял цветовую палитру. Постарался сделать менее ядовитые цвета.
+```{r}
+palette(brewer.pal(7, "Dark2"))
+```
+
+Также на графе стал отображать только имена. Кажется, что так выглядет понятнее.
+```{r}
+plot(miserables, vertex.shape="none")
+```
+
+##Кластеризация
+
+Изначальная кластеризация, которая потом используется как отправная точка по прежнему происходит по алгоритму Ньюмана.
+```{r}
+ebc <- edge.betweenness.community(miserables, directed=F)
+
+mods <- sapply(0:ecount(miserables), function(i){
+    g <- delete.edges(miserables, ebc$removed.edges[seq(length=i)])
+    cl <- clusters(g)$membership
+    modularity(miserables,cl)
+})
+
+miserables.separated = delete.edges(miserables, ebc$removed.edges[seq(length=which.max(mods)-1)])
+miserables.clust = clusters(miserables.separated)$membership
+#clusters in df
+df.clust = data.frame(V(miserables)$name,miserables.clust)
+colnames(df.clust) = c("V","clust")
+```
+И так выглядит изначальная кластеризация
+```{r}
+V(miserables)$label.color = miserables.clust
+plot(miserables, vertex.shape="none")
+```
+
+##Классификация
+```{r}
+source('classification.R')
+```
+
+Как и в оригинальном исследовании классфикация проходит по следующему алгоритму:  
+1. Из каждого класса выбирается по однму представителю случайным образом  
+2. Высчитывается матрица расстояний по выбранному алгоритму до выбранных на 1м шаге вершин  
+3. Методом KNN с k=1 классифицируются остальные вершины  
+4. Шаги 1-3 повторяются несколько раз (_100_) и объединяются методом голосования.  
+
+Ниже представлен граф проклассифицированный с использованием logforest (alpha=0.1) 
+```{r, cache=TRUE}
+class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.1)
+V(miserables)$label.color = class
+plot(miserables, vertex.shape="none")
+```
+
+##Зависимость модульности и ошибки классификации от параметра алгоритма расстояния
+Был увеличен диапазон параметра альфа до [0.01, 0.99] и шага 0.01. Исследование проводится для все тех же алгоритмов:  
+* plain_walk,  
+* walk,  
+* plain_forest,  
+* log_forest,  
+* communicability,  
+* log_communicability  
+
+```{r}
+alphas <- seq(0.01, 1.0, by=0.01)
+dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
+names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
+```
+
+Классификация происходит по уже описаному алгоритму с распараллеливанием по разным алгоритмам
+
+```{r, cache=TRUE}
+cl = makeCluster(numWorkers)
+registerDoParallel(cl)
+strt <- Sys.time()
+#calculate modularity for each alpha in alphas
+lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
+        source("metrics.R")
+        mods = vector()
+        acc = vector()
+        for(a in alphas) {
+            class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+            mods = c(mods, modularity(miserables, class))
+            acc = c(acc, sum(class==miserables.clust)/length(class))
+        }
+        data.frame(mods, acc)
+}
+print(Sys.time()-strt)
+stopCluster(cl)
+
+mods.df = data.frame(alpha = alphas)
+acc.df = data.frame(alpha = alphas)
+for(i in 1:length(dist.vect)) {
+    mods.df[names(dist.vect[i])] = lres[[i]]$mods
+    acc.df[names(dist.vect[i])] = lres[[i]]$acc
+}
+```
+
+###Результаты
+Графики уже знакомые.  
+```{r}
+mods.melted.df <- melt(mods.df, id=c("alpha"))
+g.mods<-ggplot(mods.melted.df) + 
+    geom_point(aes(alpha, value, colour=variable)) +
+    #geom_smooth(aes(alpha, value, colour=variable)) +
+    geom_line(aes(alpha, value, colour=variable)) +
+    ggtitle("Модульность графа при разбиении по классификации")
+plot(g.mods)
+```
+```{r}
+acc.melted.df <- melt(acc.df, id=c("alpha"))
+g.acc<-ggplot(acc.melted.df) + 
+                 geom_point(aes(alpha, value, colour=variable)) +
+                 #geom_smooth(aes(alpha, value, colour=variable)) +
+                 geom_line(aes(alpha, value, colour=variable)) +
+                 ggtitle("Процент ошибок по отношению к начальной кластеризации")
+plot(g.acc)
+```
+
+на этих графикав видно, какие алгоритмы более надежные, но ни на одном графике не видна зависимость от альфы, что подтверждает следующее исследование.
+
+##Исследование с фиксированным параметром
+Чтобы увидеть, является ли колебание на графиках следствием влияния параметра или случайной составляющей, было проведено то же исследование, но при фиксированном альфа (0.01) множество раз.
+```{r, cache=TRUE}
+a = 0.01
+
+cl = makeCluster(numWorkers)
+registerDoParallel(cl)
+strt <- Sys.time()
+#calculate modularity and accuracy
+lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
+    source("metrics.R")
+    mods = vector()
+    acc = vector()
+    for(j in 1:100) {
+        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+        mods = c(mods, modularity(miserables, class))
+        acc = c(acc, sum(class==miserables.clust)/length(class))
+    }
+    data.frame(mods, acc)
+}
+print(Sys.time()-strt)
+stopCluster(cl)
+
+fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
+fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
+for(i in 1:length(dist.vect)) {
+    fix.mods.df[names(dist.vect[i])] = lres[[i]]$mods
+    fix.acc.df[names(dist.vect[i])] = lres[[i]]$acc
+}
+```
+
+###Результаты
+Результаты отображены на графике boxplot, на которых показаны квартили (концы усиков и границы прямоугольнков). 50% всех результатов попали в область охваченную прямоугольником, а большая часть остальных результатов пришлась на усики графиков. Также точками отмечены максимальные и минимальные значения.
+
+```{r}
+fix.mods.melted.df <- melt(fix.mods.df)
+g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
+                    geom_boxplot() + ggtitle("Модульность с a=0.01")
+plot(g.fix.mod)
+
+fix.acc.melted.df <- melt(fix.acc.df)
+g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
+    geom_boxplot() + ggtitle("Проценто ошибок с a=0.01")
+plot(g.fix.mod)
+```
+
+На графиках видно, что подобный разброс не зависит от параметра, а является скорее характеристикой алгоритма.
+
+##Другие модификации исследования
+Также было проведено исследование с другим алгоритмом в качестве отправной точки, вместо алгоритма Ньюмана. Был выбран алгоритм walktrap основанный на random walk.
+```{r, results='hide'}
+wc <- walktrap.community(miserables)
+miserables.clust = wc$membership
+df.clust = data.frame(V(miserables)$name,miserables.clust)
+colnames(df.clust) = c("V","clust")
+```
+
+```{r}
+V(miserables)$label.color = miserables.clust
+plot(miserables, vertex.shape="none")
+```
+
+```{r, echo=FALSE, cache=TRUE, results='hide'}
+alphas <- seq(0.01, 1.0, by=0.01)
+dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
+names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
+
+cl = makeCluster(numWorkers)
+registerDoParallel(cl)
+strt <- Sys.time()
+#calculate modularity for each alpha in alphas
+lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
+    source("metrics.R")
+    mods = vector()
+    acc = vector()
+    for(a in alphas) {
+        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+        mods = c(mods, modularity(miserables, class))
+        acc = c(acc, sum(class==miserables.clust)/length(class))
+    }
+    data.frame(mods, acc)
+}
+print(Sys.time()-strt)
+stopCluster(cl)
+
+mods.df = data.frame(alpha = alphas)
+acc.df = data.frame(alpha = alphas)
+for(i in 1:length(dist.vect)) {
+    mods.df[names(dist.vect[i])] = lres[[i]]$mods
+    acc.df[names(dist.vect[i])] = lres[[i]]$acc
+}
+```
+
+```{r, echo=FALSE}
+mods.melted.df <- melt(mods.df, id=c("alpha"))
+g.mods<-ggplot(mods.melted.df) + 
+    geom_point(aes(alpha, value, colour=variable)) +
+    #geom_smooth(aes(alpha, value, colour=variable)) +
+    geom_line(aes(alpha, value, colour=variable)) +
+    ggtitle("Модульность")
+plot(g.mods)
+
+acc.melted.df <- melt(acc.df, id=c("alpha"))
+g.acc<-ggplot(acc.melted.df) + 
+    geom_point(aes(alpha, value, colour=variable)) +
+    #geom_smooth(aes(alpha, value, colour=variable)) +
+    geom_line(aes(alpha, value, colour=variable))
+plot(g.acc)
+```
+
+Явно стали заметны улучшения в работе алгоритмов communicability distance и log_communicability.
+
+##Вопросы
+С полученными выше результатами становится не совсем ясно как их интерпретировать. Выходит, что от параметра работа классификатора не зависит. И в то же время результаты communicability distance зависят от природы образования кластеров.
+
