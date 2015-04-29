@@ -1,11 +1,14 @@
 ---
-title: "Отчет"
+title: "Report"
 author: "Max"
 date: "Tuesday, April 28, 2015"
-output: pdf_document
+output:
+  pdf_document:
+    fig_height: 6
+    fig_width: 7
 ---
 
-В этом отчете хотелось бы написать, что удалось сделать.
+In this report I'd like to review what have been done recently.
 
 ```{r, echo=FALSE, results='hide', warning=FALSE}
 library(igraph)
@@ -15,42 +18,42 @@ library(RColorBrewer)
 source('metrics.R')
 ```
 
-Для начала переписал код, чтобы уменьшить скорость обработки и добавить параллельные вычисления
+For starters I've rewritten some code to boost the speed of calculations, including parallel computing.
 
 ```{r, results='hide', warning=FALSE}
 library(doParallel)
-library(foreach)
 numWorkers=4
 ```
 
-##Загрузка и обработка данных
+##Load and preprocessing data
 
-Загрузка графа происходит с прежними данными, но теперь вручную были добавлены имена героев Отверженных. На мой взгляд так граф выглядит более понятно, и это соответсвует оригинальному исследованию.
+Graph is loaded from the same source, but now I've manually added real characters names instead of two-letters abbriviation. I think it made graph more readable and understandable, and it also how the original paper was made.
+
 ```{r}
 load("miserables.Rdata")
 names <- read.table("names.txt", stringsAsFactors=F)$V1
 V(miserables)$name <- names
 ```
 
-Также графу был добавлен фиксированный лэйоут, что облегчает визуальное сравнение графических представлений графа. Расположение  вершин расчитвыется по алгоритму Фрухтермана-Рейнгольда.
+Also I've added fixed layout to ease visual comparison of graph network representation. Nodes locations are calculated based on Fruchterman-Reingold. 
 ```{r}
 mylayout <- layout.fruchterman.reingold(miserables)
 miserables$layout <- mylayout
 ```
 
-Ну и по множественным рекомендациям в прошлую нашу встречу поменял цветовую палитру. Постарался сделать менее ядовитые цвета.
+And I've also changed color palete, to make graph colors less acidic.
 ```{r}
 palette(brewer.pal(7, "Dark2"))
 ```
 
-Также на графе стал отображать только имена. Кажется, что так выглядет понятнее.
+Also now graph only displays names, without shaped.
 ```{r}
-plot(miserables, vertex.shape="none")
+par(mai=c(0,0,0,0)) 
+plot(miserables, vertex.shape="none", margin=0)
 ```
 
-##Кластеризация
-
-Изначальная кластеризация, которая потом используется как отправная точка по прежнему происходит по алгоритму Ньюмана.
+##Clusterization
+Initial clustering, which is later used for random marked nodes in semi-supervised classification, is still done with Numan algorithm.
 ```{r}
 ebc <- edge.betweenness.community(miserables, directed=F)
 
@@ -66,32 +69,34 @@ miserables.clust = clusters(miserables.separated)$membership
 df.clust = data.frame(V(miserables)$name,miserables.clust)
 colnames(df.clust) = c("V","clust")
 ```
-И так выглядит изначальная кластеризация
+This is how initial clusterizatin look like
 ```{r}
 V(miserables)$label.color = miserables.clust
+par(mai=c(0,0,0,0)) 
 plot(miserables, vertex.shape="none")
 ```
 
-##Классификация
+##Classification
 ```{r}
 source('classification.R')
 ```
 
-Как и в оригинальном исследовании классфикация проходит по следующему алгоритму:  
-1. Из каждого класса выбирается по однму представителю случайным образом  
-2. Высчитывается матрица расстояний по выбранному алгоритму до выбранных на 1м шаге вершин  
-3. Методом KNN с k=1 классифицируются остальные вершины  
-4. Шаги 1-3 повторяются несколько раз (_100_) и объединяются методом голосования.  
+As well as in the original paper classification is done by the following steps:  
+1. From each cluster one representative is randomly chosen  
+2. Distance matrix is calculated based on chosen algorithm and marked nodes from step 1  
+3. With KNN method where k=1 classify all remaining nodes  
+4. Steos 1-3 are repeated multiple times (_100_) and results are reduced via voting.  
 
-Ниже представлен граф проклассифицированный с использованием logforest (alpha=0.1) 
+The following graph has been classified with logforest and alpha-0.1  
 ```{r, cache=TRUE}
 class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.1)
 V(miserables)$label.color = class
+par(mai=c(0,0,0,0)) 
 plot(miserables, vertex.shape="none")
 ```
 
-##Зависимость модульности и ошибки классификации от параметра алгоритма расстояния
-Был увеличен диапазон параметра альфа до [0.01, 0.99] и шага 0.01. Исследование проводится для все тех же алгоритмов:  
+##Dependency of modularity and error rate on alpha-parameter  
+Alpha range was widen to [0.01, 0.99] with step 0.01. Research is done for the save distance algorithms:  
 * plain_walk,  
 * walk,  
 * plain_forest,  
@@ -105,7 +110,7 @@ dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, com
 names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
 ```
 
-Классификация происходит по уже описаному алгоритму с распараллеливанием по разным алгоритмам
+Classification is done by the algorithm described above and done for several distances in parallel
 
 ```{r, cache=TRUE}
 cl = makeCluster(numWorkers)
@@ -134,15 +139,15 @@ for(i in 1:length(dist.vect)) {
 }
 ```
 
-###Результаты
-Графики уже знакомые.  
+###Results
+This is already familiar graphics.  
 ```{r}
 mods.melted.df <- melt(mods.df, id=c("alpha"))
 g.mods<-ggplot(mods.melted.df) + 
     geom_point(aes(alpha, value, colour=variable)) +
     #geom_smooth(aes(alpha, value, colour=variable)) +
     geom_line(aes(alpha, value, colour=variable)) +
-    ggtitle("Модульность графа при разбиении по классификации")
+    ggtitle("Modularity")
 plot(g.mods)
 ```
 ```{r}
@@ -151,14 +156,14 @@ g.acc<-ggplot(acc.melted.df) +
                  geom_point(aes(alpha, value, colour=variable)) +
                  #geom_smooth(aes(alpha, value, colour=variable)) +
                  geom_line(aes(alpha, value, colour=variable)) +
-                 ggtitle("Процент ошибок по отношению к начальной кластеризации")
+                 ggtitle("ErrorRate")
 plot(g.acc)
 ```
 
-на этих графикав видно, какие алгоритмы более надежные, но ни на одном графике не видна зависимость от альфы, что подтверждает следующее исследование.
+As it appears some distances are more consistent with results and has better results than others. But I can't see any dependence on alpha-parameter, which is supported by the next research.
 
-##Исследование с фиксированным параметром
-Чтобы увидеть, является ли колебание на графиках следствием влияния параметра или случайной составляющей, было проведено то же исследование, но при фиксированном альфа (0.01) множество раз.
+##Research with fixed parameter
+To prove that high diversity has nothing to do with alpha parameter the same reaseach was conducted, but with fixed alpha (0.01) for many times(100).
 ```{r, cache=TRUE}
 a = 0.01
 
@@ -188,25 +193,25 @@ for(i in 1:length(dist.vect)) {
 }
 ```
 
-###Результаты
-Результаты отображены на графике boxplot, на которых показаны квартили (концы усиков и границы прямоугольнков). 50% всех результатов попали в область охваченную прямоугольником, а большая часть остальных результатов пришлась на усики графиков. Также точками отмечены максимальные и минимальные значения.
+###Results
+Results are shown on boxplot graphs, where the end of whiskers and borders of rectangles represent quartiles. 50% of all results lay in the area of rectangles. Also the dots represents min and max values.  
 
 ```{r}
 fix.mods.melted.df <- melt(fix.mods.df)
 g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
-                    geom_boxplot() + ggtitle("Модульность с a=0.01")
+                    geom_boxplot() + ggtitle("Modularity, a=0.01")
 plot(g.fix.mod)
 
 fix.acc.melted.df <- melt(fix.acc.df)
 g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
-    geom_boxplot() + ggtitle("Проценто ошибок с a=0.01")
+    geom_boxplot() + ggtitle("ErrorRate, a=0.01")
 plot(g.fix.mod)
 ```
 
-На графиках видно, что подобный разброс не зависит от параметра, а является скорее характеристикой алгоритма.
+As we see, even with fixed parameter results spreaded the same way they are in previous graphs.
 
-##Другие модификации исследования
-Также было проведено исследование с другим алгоритмом в качестве отправной точки, вместо алгоритма Ньюмана. Был выбран алгоритм walktrap основанный на random walk.
+##Other modifications
+It's worth to mention that the same research was also conducted with another initial clustering algorithm instead Newman one. Walktrap algorithm, which is based on random walk was also tested.  
 ```{r, results='hide'}
 wc <- walktrap.community(miserables)
 miserables.clust = wc$membership
@@ -216,6 +221,7 @@ colnames(df.clust) = c("V","clust")
 
 ```{r}
 V(miserables)$label.color = miserables.clust
+par(mai=c(0,0,0,0)) 
 plot(miserables, vertex.shape="none")
 ```
 
@@ -256,19 +262,20 @@ g.mods<-ggplot(mods.melted.df) +
     geom_point(aes(alpha, value, colour=variable)) +
     #geom_smooth(aes(alpha, value, colour=variable)) +
     geom_line(aes(alpha, value, colour=variable)) +
-    ggtitle("Модульность")
+    ggtitle("Modularity")
 plot(g.mods)
 
 acc.melted.df <- melt(acc.df, id=c("alpha"))
 g.acc<-ggplot(acc.melted.df) + 
     geom_point(aes(alpha, value, colour=variable)) +
     #geom_smooth(aes(alpha, value, colour=variable)) +
-    geom_line(aes(alpha, value, colour=variable))
+    geom_line(aes(alpha, value, colour=variable)) +
+    ggtitle("Error Rate")
 plot(g.acc)
 ```
 
-Явно стали заметны улучшения в работе алгоритмов communicability distance и log_communicability.
+Communicability distance as well as its logarithmic version now show much better results.
 
-##Вопросы
-С полученными выше результатами становится не совсем ясно как их интерпретировать. Выходит, что от параметра работа классификатора не зависит. И в то же время результаты communicability distance зависят от природы образования кластеров.
+##Questions
+It's difficult to interprete above results comparing them to results of original work. It seems that our distances are resistant to alpha parameter change. And it doesn't matter what alpha value to pick. And at the same time results of communicability distance depends on the nature of clusters origin.  
 
