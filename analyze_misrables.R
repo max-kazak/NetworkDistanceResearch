@@ -59,7 +59,9 @@ plot(miserables, vertex.shape="none")
 #=======================classification=======================================
 source('classification.R')
 
-class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.01)
+l.marked.mult = select.marked.multiple(df.clust)
+
+class = classify.multiple(graph = miserables, marked.mult = l.marked.mult, distance = logforest_dist, alpha = 0.01)
 
 #plot
 V(miserables)$label.color = class
@@ -79,7 +81,7 @@ lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
         mods = vector()
         acc = vector()
         for(a in alphas) {
-            class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
+            class = classify.multiple(graph = miserables, marked.mult = l.marked.mult, distance = dist.vect[[i]], alpha = a)
             mods = c(mods, modularity(miserables, class))
             acc = c(acc, sum(class==miserables.clust)/length(class))
         }
@@ -115,53 +117,11 @@ acc.melted.df <- melt(acc.df, id=c("alpha"))
 g.acc<-ggplot(acc.melted.df) + 
                  geom_point(aes(alpha, value, colour=variable)) +
                  #geom_smooth(aes(alpha, value, colour=variable)) +
-                 geom_line(aes(alpha, value, colour=variable))
+                 geom_line(aes(alpha, value, colour=variable))+
+                 ggtitle("Процент Ошибки")
 png(filename=file.path(folder,'miserables_error.png'))
 plot(g.acc)
 dev.off()
 
-
-#==================Calc modularity multiple times with fixed alpha=======================
-a = 0.01
-
-cl = makeCluster(numWorkers)
-registerDoParallel(cl)
-strt <- Sys.time()
-#calculate modularity and accuracy
-lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
-    source("metrics.R")
-    mods = vector()
-    acc = vector()
-    for(j in 1:100) {
-        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
-        mods = c(mods, modularity(miserables, class))
-        acc = c(acc, sum(class==miserables.clust)/length(class))
-    }
-    data.frame(mods, acc)
-}
-print(Sys.time()-strt)
-stopCluster(cl)
-
-fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
-fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
-for(i in 1:length(dist.vect)) {
-    fix.mods.df[names(dist.vect[i])] = lres[[i]]$mods
-    fix.acc.df[names(dist.vect[i])] = lres[[i]]$acc
-}
-
-#plot results
-fix.mods.melted.df <- melt(fix.mods.df)
-g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
-                    geom_boxplot() + ggtitle("Модульность с a=0.01")
-png(filename=file.path(folder,'miserables_mod_fixed_alpha.png'))
-plot(g.fix.mod)
-dev.off()
-
-fix.acc.melted.df <- melt(fix.acc.df)
-g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
-    geom_boxplot() + ggtitle("Проценто ошибок с a=0.01")
-png(filename=file.path(folder,'miserables_acc_fixed_alpha.png'))
-plot(g.fix.mod)
-dev.off()
 
 
