@@ -11,8 +11,8 @@ numWorkers=4
 source('metrics.R')
 
 #Load Les Miserables graph
-load("miserables.Rdata")
-names <- read.table("names.txt", stringsAsFactors=F)$V1
+load("data/miserables/miserables.Rdata")
+names <- read.table("data/miserables/names.txt", stringsAsFactors=F)$V1
 V(miserables)$name <- names
 
 #add fixed layout
