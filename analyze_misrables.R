@@ -68,7 +68,7 @@ V(miserables)$label.color = class
 plot(miserables, vertex.shape="none")
 
 #=====================modularity and error alpha-resistance==========================
-alphas <- seq(0.01, 1.0, by=0.01)
+alphas <- seq(0.001, 1.0, by=0.001)
 dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
 names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
 
