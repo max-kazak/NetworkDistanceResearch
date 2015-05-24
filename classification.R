@@ -22,6 +22,11 @@ classify.multiple <- function(graph, marked.mult, distance, alpha) {
     }
     rownames(class) <- V(graph)$name
     
+    class
+}
+
+classify.multiple.voted <- function(graph, marked.mult, distance, alpha) {
+    class <- classify.multiple(graph, marked.mult, distance, alpha)
     #voting across all classifications
     class.vote <- apply(class,1,function(x) as.numeric(names(which.max(table(x)))))
     class.vote
