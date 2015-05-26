@@ -4,15 +4,14 @@ classify <- function(D, marked, knn=1) {
     D.marked = D[,as.vector(marked$V)]
     
     graph.clust = sapply(rownames(D), function(v){
-        min.ids = which(D.marked[v,] == sort(D.marked[v,])[1:knn])
-        min.dist = D.marked[v, min.ids]
-        min.names = names(min.ids)
+        min.dist = sort(D.marked[v,])[1:knn]
+        min.names = names(min.dist)
         min.class = sapply(min.names, function(min.name) marked[marked$V==min.name,2])
         
         class = as.numeric(names(which(table(min.class)==max(table(min.class)))))
         if(length(class)>1) {
             df.min.class = data.frame(class = min.class, dist = min.dist)
-            df.class.avgdist = aggregate(df.min.class[df.min.class$class %in% class,], by=class, mean)
+            df.class.avgdist = aggregate(dist~class ,df.min.class[df.min.class$class %in% class,], mean)
             class = df.class.avgdist[which.min(df.class.avgdist$dist),]$class
         }
         class
