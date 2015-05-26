@@ -27,6 +27,8 @@ palette(brewer.pal(7, "Dark2"))
 V(miserables)
 plot(miserables, vertex.shape="none")
 
+#======================clusterization=======================================
+
 # let's see if we have communities here using the 
 # Grivan-Newman algorithm
 # 1st we calculate the edge betweenness, merges, etc...
@@ -59,109 +61,114 @@ plot(miserables, vertex.shape="none")
 #=======================classification=======================================
 source('classification.R')
 
-class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = logforest_dist, alpha = 0.01)
+l.marked.mult = select.marked.multiple(df.clust)
+
+class = classify.multiple.voted(graph = miserables, marked.mult = l.marked.mult, distance = logforest_dist, alpha = 0.01)
 
 #plot
 V(miserables)$label.color = class
 plot(miserables, vertex.shape="none")
 
 #=====================modularity and error alpha-resistance==========================
-alphas <- seq(0.01, 1.0, by=0.01)
+alphas <- c(
+    seq(0.001, 0.009, by=0.001), 
+    seq(0.01,0.09, by=0.01),
+    seq(0.1, 0.9, by=0.1)
+    ,seq(0.91, 0.99, by=0.01)
+    ,seq(0.991, 0.999, by=0.001) 
+    )
 dist.vect <- c(plainwalk_dist, walk_dist , plainforest_dist, logforest_dist, communicability_dist, logcommunicability_dist)
 names(dist.vect) <- c("plain_walk", "walk", "plain_forest", "log_forest", "communicability", "log_communicability")
 
 cl = makeCluster(numWorkers)
+clusterExport(cl, c("miserables", "alphas", "l.marked.mult",
+                    "classify.multiple", "classify",
+                    "getT","spectral_radius", "addnames", "general_dist","plainwalk_dist", "walk_dist" , "plainforest_dist", 
+                    "logforest_dist", "communicability_dist", "logcommunicability_dist"))
 registerDoParallel(cl)
+
+#calculate class for each dist*alpha*multiple
 strt <- Sys.time()
-#calculate modularity for each alpha in alphas
-lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
-        source("metrics.R")
-        mods = vector()
-        acc = vector()
-        for(a in alphas) {
-            class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
-            mods = c(mods, modularity(miserables, class))
-            acc = c(acc, sum(class==miserables.clust)/length(class))
-        }
-        data.frame(mods, acc)
-}
+l.dist.alpha.class <- lapply(dist.vect, function(dist) {
+    #calculate modularity for each alpha in alphas
+    l.alpha.class = foreach(i = 1:length(alphas), .packages="igraph") %dopar% {
+        classify.multiple(miserables, l.marked.mult, dist, alphas[i])        
+    }     
+})
 print(Sys.time()-strt)
 stopCluster(cl)
 
-mods.df = data.frame(alpha = alphas)
-acc.df = data.frame(alpha = alphas)
-for(i in 1:length(dist.vect)) {
-    mods.df[names(dist.vect[i])] = lres[[i]]$mods
-    acc.df[names(dist.vect[i])] = lres[[i]]$acc
-}
+#calculate accuracy and modularity for each dist*alpha*multiple
+l.dist.alpha.accmod <- lapply(l.dist.alpha.class, function(l.alpha.class) {
+                              l <- lapply(l.alpha.class, function(m.class) 
+                                  apply(m.class,2, function(class) c(modularity(miserables, class), 
+                                                                     sum(class==miserables.clust)/length(class)))
+                                    )
+                              names(l) <- alphas
+                              l
+                              })
 
-#==============print results============
+#calculate quantiles of accuracy and modularity for each dist*alpha
+l.dist.alpha.accmod.quant <- lapply(l.dist.alpha.accmod, function(l.alpha.accmod)
+                                    lapply(l.alpha.accmod, function(m.accmod) {
+                                        m.accmod.quant <- t(apply(m.accmod,1, function(accmod) quantile(accmod, probs=c(.25, .5, .75))))
+                                        df.accmod.quant <- data.frame(m.accmod.quant)
+                                        names(df.accmod.quant)<-c('q25','q50','q75')
+                                        df.accmod.quant[["var"]]<-c('mod','acc')
+                                        df.accmod.quant
+                                    })
+                                )
+
+df.dist.alpha.accmod.quant<-melt(l.dist.alpha.accmod.quant, id=c('q25','q50','q75'))[,c(1,2,3,5,6,7)]
+names(df.dist.alpha.accmod.quant) <- c('q25','q50','q75','measure','alpha','dist')
+df.dist.alpha.accmod.quant$measure <- as.factor(df.dist.alpha.accmod.quant$measure)
+df.dist.alpha.accmod.quant$dist <- as.factor(df.dist.alpha.accmod.quant$dist)
+
+
+#==============visualize df.dist.alpha.accmod.quant============
 folder = as.character(Sys.Date())
 dir.create(folder, showWarnings = FALSE)
 
+ydim_mod = c(round(min(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='mod',]$q25),digits=1),
+             round(max(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='mod',]$q75),digits=1))
+ydim_acc = c(round(min(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='acc',]$q25),digits=1),
+             round(max(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='acc',]$q75),digits=1))
+
 #view dependency of alpha and modularity
-mods.melted.df <- melt(mods.df, id=c("alpha"))
-g.mods<-ggplot(mods.melted.df) + 
-    geom_point(aes(alpha, value, colour=variable)) +
-    #geom_smooth(aes(alpha, value, colour=variable)) +
-    geom_line(aes(alpha, value, colour=variable)) +
-    ggtitle("Модульность")
-png(filename=file.path(folder,'miserables_mod.png'))
-plot(g.mods)
-dev.off()
+g.mods <- ggplot(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='mod',], aes(x = alpha, group = dist)) +
+    geom_ribbon(aes(ymin = q25, ymax = q75, fill=dist), alpha = .25) +
+    geom_line(aes(y = q50, colour=dist), size=1) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    ggtitle("Modularity") + ylab("modularoty") +
+    scale_y_continuous(breaks = c(seq(from = ydim_mod[1], to = ydim_mod[2], by = 0.01)),
+                       labels = c(seq(from = ydim_mod[1], to = ydim_mod[2], by = 0.01)))
+
+ggsave(
+    "miserables_newman_mod.png",
+    g.mods,
+    path=folder,
+    width = 10,
+    height = 10
+)
 
 #view dependency of alpha and error
-acc.melted.df <- melt(acc.df, id=c("alpha"))
-g.acc<-ggplot(acc.melted.df) + 
-                 geom_point(aes(alpha, value, colour=variable)) +
-                 #geom_smooth(aes(alpha, value, colour=variable)) +
-                 geom_line(aes(alpha, value, colour=variable))
-png(filename=file.path(folder,'miserables_error.png'))
-plot(g.acc)
-dev.off()
+g.acc <- ggplot(df.dist.alpha.accmod.quant[df.dist.alpha.accmod.quant$measure=='acc',], aes(x = alpha, group = dist)) +
+    geom_ribbon(aes(ymin = q25, ymax = q75, fill=dist), alpha = .25) +
+    geom_line(aes(y = q50, colour=dist), size=1) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    ggtitle("Error rate") + ylab("accuracy")+
+    scale_y_continuous(breaks = c(seq(from = ydim_acc[1], to = ydim_acc[2], by = 0.01)),
+                       labels = c(seq(from = ydim_acc[1], to = ydim_acc[2], by = 0.01)))
+
+ggsave(
+    "miserables_newman_acc.png",
+    g.acc,
+    path=folder,
+    width = 10,
+    height = 10
+)
 
 
-#==================Calc modularity multiple times with fixed alpha=======================
-a = 0.01
 
-cl = makeCluster(numWorkers)
-registerDoParallel(cl)
-strt <- Sys.time()
-#calculate modularity and accuracy
-lres = foreach(i = 1:length(dist.vect), .packages="igraph") %dopar% {
-    source("metrics.R")
-    mods = vector()
-    acc = vector()
-    for(j in 1:100) {
-        class = classify.multiple(times = 100, graph = miserables, clusters = df.clust, distance = dist.vect[[i]], alpha = a)
-        mods = c(mods, modularity(miserables, class))
-        acc = c(acc, sum(class==miserables.clust)/length(class))
-    }
-    data.frame(mods, acc)
-}
-print(Sys.time()-strt)
-stopCluster(cl)
-
-fix.mods.df = data.frame(matrix(NA, nrow=100, ncol=0))
-fix.acc.df = data.frame(matrix(NA, nrow=100, ncol=0))
-for(i in 1:length(dist.vect)) {
-    fix.mods.df[names(dist.vect[i])] = lres[[i]]$mods
-    fix.acc.df[names(dist.vect[i])] = lres[[i]]$acc
-}
-
-#plot results
-fix.mods.melted.df <- melt(fix.mods.df)
-g.fix.mod <- ggplot(fix.mods.melted.df, aes(factor(variable),value)) + 
-                    geom_boxplot() + ggtitle("Модульность с a=0.01")
-png(filename=file.path(folder,'miserables_mod_fixed_alpha.png'))
-plot(g.fix.mod)
-dev.off()
-
-fix.acc.melted.df <- melt(fix.acc.df)
-g.fix.acc <- ggplot(fix.acc.melted.df, aes(factor(variable),value)) + 
-    geom_boxplot() + ggtitle("Проценто ошибок с a=0.01")
-png(filename=file.path(folder,'miserables_acc_fixed_alpha.png'))
-plot(g.fix.mod)
-dev.off()
 
 
