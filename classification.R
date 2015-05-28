@@ -19,14 +19,14 @@ classify <- function(D, marked, knn=1) {
     graph.clust
 }
 
-classify.multiple <- function(graph, marked.mult, distance, alpha) {
+classify.multiple <- function(graph, marked.mult, distance, alpha, knn=1) {
     D = distance(graph, alpha)
     
     #classification for numerous times
     class <- vector()
     for(i in seq(length(marked.mult))) {
         #cat("=")
-        class <- c(class,classify(D, marked.mult[[i]]))
+        class <- c(class,classify(D, marked.mult[[i]], knn=knn))
         dim(class) <- c(dim(D)[1],i)
     }
     rownames(class) <- V(graph)$name
@@ -34,8 +34,8 @@ classify.multiple <- function(graph, marked.mult, distance, alpha) {
     class
 }
 
-classify.multiple.voted <- function(graph, marked.mult, distance, alpha) {
-    class <- classify.multiple(graph, marked.mult, distance, alpha)
+classify.multiple.voted <- function(graph, marked.mult, distance, alpha, knn=1) {
+    class <- classify.multiple(graph, marked.mult, distance, alpha, knn=knn)
     #voting across all classifications
     
     class.vote <- apply(class,1,function(x) as.numeric(names(which.max(table(x)))))
